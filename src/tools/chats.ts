@@ -2,6 +2,34 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { whatsAppConnection } from '../connection.js';
 import { ChatActionArgs, ToolResult } from '../types.js';
 
+// Helper function to check WhatsApp connection
+async function checkWhatsAppConnection(): Promise<{ isConnected: boolean; error?: string }> {
+  try {
+    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+      return { 
+        isConnected: false, 
+        error: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' 
+      };
+    }
+
+    // Additional check to ensure client is actually ready
+    const clientState = await whatsAppConnection.client.getState();
+    if (clientState !== 'CONNECTED') {
+      return { 
+        isConnected: false, 
+        error: `WhatsApp client state: ${clientState}. Please wait for connection to be ready. / מצב לקוח ווטסאפ: ${clientState}. אנא המתן עד שהחיבור יהיה מוכן.` 
+      };
+    }
+
+    return { isConnected: true };
+  } catch (error) {
+    return { 
+      isConnected: false, 
+      error: `Connection check failed / בדיקת חיבור נכשלה: ${error instanceof Error ? error.message : 'Unknown error'}` 
+    };
+  }
+}
+
 // Get All Chats Tool
 export const getChatsTool: Tool = {
   name: 'whatsapp_get_chats',
@@ -26,49 +54,79 @@ export const getChatsTool: Tool = {
 
 export async function getChats(args: { limit?: number; type?: 'all' | 'private' | 'group' }): Promise<ToolResult> {
   try {
-    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+    const connectionCheck = await checkWhatsAppConnection();
+    if (!connectionCheck.isConnected) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' }]
+        content: [{ type: 'text', text: connectionCheck.error }]
       };
     }
 
+    // Add a small delay to ensure chats are fully loaded
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
     const allChats = await whatsAppConnection.client.getChats();
     
-    let filteredChats = allChats;
+    // Filter out any invalid chats and check for required properties
+    const validChats = allChats.filter((chat: any) => {
+      return chat && chat.id && chat.id._serialized && typeof chat.id._serialized === 'string';
+    });
+
+    console.error(`📊 Found ${allChats.length} total chats, ${validChats.length} valid chats`);
+    
+    let filteredChats = validChats;
     if (args.type === 'private') {
-      filteredChats = allChats.filter((chat: any) => !chat.isGroup);
+      filteredChats = validChats.filter((chat: any) => !chat.isGroup);
     } else if (args.type === 'group') {
-      filteredChats = allChats.filter((chat: any) => chat.isGroup);
+      filteredChats = validChats.filter((chat: any) => chat.isGroup);
     }
 
     const limitedChats = filteredChats.slice(0, args.limit || 50);
     
-    const chatList = limitedChats.map((chat: any) => ({
-      id: chat.id._serialized,
-      name: chat.name,
-      isGroup: chat.isGroup,
-      isReadOnly: chat.isReadOnly,
-      unreadCount: chat.unreadCount,
-      timestamp: chat.timestamp ? new Date(chat.timestamp * 1000).toISOString() : null,
-      archived: chat.archived,
-      pinned: chat.pinned,
-      muteExpiration: chat.muteExpiration ? new Date(chat.muteExpiration * 1000).toISOString() : null,
-      participantCount: chat.isGroup ? undefined : undefined
-    }));
+    const chatList = limitedChats.map((chat: any) => {
+      try {
+        return {
+          id: chat.id._serialized,
+          name: chat.name || 'Unknown',
+          isGroup: Boolean(chat.isGroup),
+          isReadOnly: Boolean(chat.isReadOnly),
+          unreadCount: Number(chat.unreadCount) || 0,
+          timestamp: chat.timestamp ? new Date(chat.timestamp * 1000).toISOString() : null,
+          archived: Boolean(chat.archived),
+          pinned: Boolean(chat.pinned),
+          muteExpiration: chat.muteExpiration ? new Date(chat.muteExpiration * 1000).toISOString() : null,
+          // Only add participantCount for groups if available
+          ...(chat.isGroup && chat.participants ? { participantCount: chat.participants.length } : {})
+        };
+      } catch (error) {
+        console.error('❌ Error processing chat:', error);
+        return {
+          id: 'error',
+          name: 'Error processing chat',
+          isGroup: false,
+          isReadOnly: false,
+          unreadCount: 0,
+          timestamp: null,
+          archived: false,
+          pinned: false,
+          muteExpiration: null
+        };
+      }
+    }).filter((chat: any) => chat.id !== 'error'); // Remove error entries
 
     return {
       content: [{
         type: 'text',
-        text: `Found ${limitedChats.length} chats / נמצאו ${limitedChats.length} צ\'אטים:\n\n${JSON.stringify(chatList, null, 2)}`
+        text: `Found ${chatList.length} chats / נמצאו ${chatList.length} צ\'אטים:\n\n${JSON.stringify(chatList, null, 2)}`
       }]
     };
   } catch (error) {
+    console.error('❌ Full error details:', error);
     return {
       isError: true,
       content: [{
         type: 'text',
-        text: `Failed to get chats / שגיאה בקבלת צ\'אטים: ${error instanceof Error ? error.message : 'Unknown error'}`
+        text: `Failed to get chats / שגיאה בקבלת צ\'אטים: ${error instanceof Error ? error.message : 'Unknown error'}\n\nThis might be a timing issue. Please wait a few seconds and try again.\nייתכן שזו בעיית תזמון. אנא המתן מספר שניות ונסה שוב.`
       }]
     };
   }
@@ -92,26 +150,36 @@ export const getChatInfoTool: Tool = {
 
 export async function getChatInfo(args: { chatId: string }): Promise<ToolResult> {
   try {
-    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+    const connectionCheck = await checkWhatsAppConnection();
+    if (!connectionCheck.isConnected) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' }]
+        content: [{ type: 'text', text: connectionCheck.error }]
       };
     }
 
     const chat = await whatsAppConnection.client.getChatById(args.chatId);
     
+    if (!chat || !chat.id || !chat.id._serialized) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `Chat not found or invalid chat ID / צ\'אט לא נמצא או מזהה צ\'אט לא תקין: ${args.chatId}`
+        }]
+      };
+    }
+    
     let chatInfo: any = {
       id: chat.id._serialized,
-      name: chat.name,
-      isGroup: chat.isGroup,
-      isReadOnly: chat.isReadOnly,
-      unreadCount: chat.unreadCount,
+      name: chat.name || 'Unknown',
+      isGroup: Boolean(chat.isGroup),
+      isReadOnly: Boolean(chat.isReadOnly),
+      unreadCount: Number(chat.unreadCount) || 0,
       timestamp: chat.timestamp ? new Date(chat.timestamp * 1000).toISOString() : null,
-      archived: chat.archived,
-      pinned: chat.pinned,
-      muteExpiration: chat.muteExpiration ? new Date(chat.muteExpiration * 1000).toISOString() : null,
-      participantCount: chat.isGroup ? undefined : undefined
+      archived: Boolean(chat.archived),
+      pinned: Boolean(chat.pinned),
+      muteExpiration: chat.muteExpiration ? new Date(chat.muteExpiration * 1000).toISOString() : null
     };
 
     // For group chats, try to get additional info
@@ -130,9 +198,14 @@ export async function getChatInfo(args: { chatId: string }): Promise<ToolResult>
             announce: groupChat.groupMetadata.announce || false
           };
         }
+        
+        // Add participant count if available
+        if (groupChat.participants) {
+          chatInfo.participantCount = groupChat.participants.length;
+        }
       } catch (e) {
         // Group metadata might not be available
-        console.log('Group metadata not available');
+        console.error('Group metadata not available:', e);
       }
     }
 
@@ -143,11 +216,12 @@ export async function getChatInfo(args: { chatId: string }): Promise<ToolResult>
       }]
     };
   } catch (error) {
+    console.error('❌ Full error details for getChatInfo:', error);
     return {
       isError: true,
       content: [{
         type: 'text',
-        text: `Failed to get chat info / שגיאה בקבלת מידע צ\'אט: ${error instanceof Error ? error.message : 'Unknown error'}`
+        text: `Failed to get chat info / שגיאה בקבלת מידע צ\'אט: ${error instanceof Error ? error.message : 'Unknown error'}\n\nPlease check that the chat ID is valid and try again.\nאנא בדוק שמזהה הצ\'אט תקין ונסה שוב.`
       }]
     };
   }
@@ -176,10 +250,11 @@ export const archiveChatTool: Tool = {
 
 export async function archiveChat(args: { chatId: string; archive?: boolean }): Promise<ToolResult> {
   try {
-    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+    const connectionCheck = await checkWhatsAppConnection();
+    if (!connectionCheck.isConnected) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' }]
+        content: [{ type: 'text', text: connectionCheck.error }]
       };
     }
 
@@ -233,10 +308,11 @@ export const pinChatTool: Tool = {
 
 export async function pinChat(args: { chatId: string; pin?: boolean }): Promise<ToolResult> {
   try {
-    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+    const connectionCheck = await checkWhatsAppConnection();
+    if (!connectionCheck.isConnected) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' }]
+        content: [{ type: 'text', text: connectionCheck.error }]
       };
     }
 
@@ -295,10 +371,11 @@ export const muteChatTool: Tool = {
 
 export async function muteChat(args: { chatId: string; mute?: boolean; duration?: number }): Promise<ToolResult> {
   try {
-    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+    const connectionCheck = await checkWhatsAppConnection();
+    if (!connectionCheck.isConnected) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' }]
+        content: [{ type: 'text', text: connectionCheck.error }]
       };
     }
 
@@ -353,10 +430,11 @@ export const markAsReadTool: Tool = {
 
 export async function markAsRead(args: { chatId: string; read?: boolean }): Promise<ToolResult> {
   try {
-    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+    const connectionCheck = await checkWhatsAppConnection();
+    if (!connectionCheck.isConnected) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' }]
+        content: [{ type: 'text', text: connectionCheck.error }]
       };
     }
 
@@ -406,10 +484,11 @@ export const clearMessagesTool: Tool = {
 
 export async function clearMessages(args: { chatId: string }): Promise<ToolResult> {
   try {
-    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+    const connectionCheck = await checkWhatsAppConnection();
+    if (!connectionCheck.isConnected) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' }]
+        content: [{ type: 'text', text: connectionCheck.error }]
       };
     }
 
@@ -451,10 +530,11 @@ export const deleteChatTool: Tool = {
 
 export async function deleteChat(args: { chatId: string }): Promise<ToolResult> {
   try {
-    if (!whatsAppConnection.isConnected() || !whatsAppConnection.client) {
+    const connectionCheck = await checkWhatsAppConnection();
+    if (!connectionCheck.isConnected) {
       return {
         isError: true,
-        content: [{ type: 'text', text: 'WhatsApp client is not connected / לקוח ווטסאפ אינו מחובר' }]
+        content: [{ type: 'text', text: connectionCheck.error }]
       };
     }
 
