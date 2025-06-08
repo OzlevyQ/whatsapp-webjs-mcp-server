@@ -1,0 +1,56 @@
+{
+  "name": "whatsapp-webjs-mcp-server",
+  "version": "1.0.0",
+  "description": "WhatsApp Web.js MCP Server - Complete integration with Model Context Protocol",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "whatsapp-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "qr": "npm run build && node dist/qr-standalone.js",
+    "setup": "npm run build && node dist/whatsapp-setup.js",
+    "dev": "tsx src/index.ts",
+    "watch": "tsc --watch",
+    "connect": "node dist/connect.js",
+    "prepare": "npm run build",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "whatsapp",
+    "mcp",
+    "model-context-protocol",
+    "whatsapp-web.js",
+    "ai",
+    "chatbot"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.0.0",
+    "@types/express": "^5.0.3",
+    "@types/qrcode": "^1.5.5",
+    "express": "^4.21.2",
+    "fs-extra": "^11.2.0",
+    "node-schedule": "^2.1.1",
+    "open": "^8.4.2",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^18.0.0",
+    "@types/node-schedule": "^2.1.7",
+    "@types/qrcode-terminal": "^0.12.0",
+    "rimraf": "^5.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "author": "WhatsApp MCP Server",
+  "license": "MIT"
+}
