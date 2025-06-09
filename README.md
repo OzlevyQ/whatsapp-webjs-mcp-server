@@ -76,7 +76,7 @@ This is an advanced **Model Context Protocol (MCP)** server that allows **Claude
 
 ```bash
 # 1. Clone the project
-git clone https://github.com/yourusername/whatsapp-webjs-mcp-server.git
+git clone https://github.com/ozlevyq/whatsapp-webjs-mcp-server.git
 cd whatsapp-webjs-mcp-server
 
 # 2. Install dependencies
